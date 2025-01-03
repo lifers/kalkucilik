@@ -1,41 +1,35 @@
 module;
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/parser/parser.hpp>
-#include <boost/unordered/unordered_flat_map.hpp>
+#include <boost/parser/transcode_view.hpp>
 module Parser;
 
 import WinRT;
+import Environment;
 
 namespace mp = boost::multiprecision;
 namespace bp = boost::parser;
-namespace bu = boost::unordered;
+using val_t = mp::cpp_dec_float_100;
 
-mp::cpp_dec_float_100 const pi("3.141592653589793238462643383279502"
-            "8841971693993751058209749445923078164062862089986280348253421170679");
-mp::cpp_dec_float_100 const e("2.7182818284590452353602874713526624"
-            "977572470936999595749669676277240766303535475945713821785251664274");
+val_t const pi("3.141592653589793238462643383279502"
+    "8841971693993751058209749445923078164062862089986280348253421170679");
+val_t const e("2.7182818284590452353602874713526624"
+    "977572470936999595749669676277240766303535475945713821785251664274");
 
-struct environment {
-    bu::unordered_flat_map<std::string, mp::cpp_dec_float_100> variables;
-};
-
-// Handle variable assignment
-auto constexpr do_assign{ [](auto& ctx) {
-    auto vars{ bp::_locals(ctx) };
-    auto varname { bp::_attr(ctx) };
-    auto value{ bp::_val(ctx) };
-    vars.variables[varname] = value; // Store variable
-    bp::_val(ctx) = value; // Return the assigned value
-} };
+//auto constexpr do_assign{ [](auto& ctx) {
+//    val_t const val{ bp::_attr(ctx) };
+//    bp::_val(ctx) = val;
+//} };
 
 // Lookup variable value
 auto constexpr do_lookup{ [](auto& ctx) {
-    auto& vars = bp::_locals(ctx);
-    auto varname = bp::_attr(ctx);
-    if (vars.variables.find(varname) != vars.variables.end()) {
-        bp::_val(ctx) = vars.variables[varname];
-    } else {
-        throw std::runtime_error("Undefined variable: " + varname);
+    auto const env{ bp::_globals(ctx) };
+    auto const varname{ bp::_attr(ctx) };
+    if (auto const val{ env.get(varname) }; !val.empty()) {
+        bp::_val(ctx) = val_t(val);
+    }
+    else {
+        bp::_pass(ctx) = false;
     }
 } };
 
@@ -46,7 +40,7 @@ auto constexpr do_translate{ [](auto& ctx) {
         str += '.';
         str += b.value();
     }
-    bp::_val(ctx) = mp::cpp_dec_float_100(str);
+    bp::_val(ctx) = val_t(str);
 } };
 auto constexpr do_translate_neg{ [](auto& ctx) {
     auto [a, b] { bp::_attr(ctx) };
@@ -55,7 +49,7 @@ auto constexpr do_translate_neg{ [](auto& ctx) {
         str += '.';
         str += b.value();
     }
-    bp::_val(ctx) = mp::cpp_dec_float_100("-" + str);
+    bp::_val(ctx) = val_t("-" + str);
 } };
 auto constexpr do_power_10{ [](auto& ctx) { bp::_val(ctx) *= pow(10, bp::_attr(ctx)); } };
 auto constexpr do_id{ [](auto& ctx) { bp::_val(ctx) = bp::_attr(ctx); } };
@@ -75,17 +69,16 @@ auto constexpr do_abs{ [](auto& ctx) { bp::_val(ctx) = abs(bp::_attr(ctx)); } };
 auto constexpr do_pi{ [](auto& ctx) { bp::_val(ctx) = pi; } };
 auto constexpr do_e{ [](auto& ctx) { bp::_val(ctx) = e; } };
 
-using val_t = mp::cpp_dec_float_100;
 template<typename Tag>
 using calc_rule = bp::rule<Tag, val_t>;
 
 calc_rule<class power_10_tag> constexpr power_10{ "power_10" };
-bp::rule<class fac_uns_tag, val_t, environment> constexpr fac_uns{ "fac_uns" };
+calc_rule<class fac_uns_tag> constexpr fac_uns{ "fac_uns" };
 calc_rule<class factor_tag> constexpr factor{ "factor" };
 calc_rule<class exponent_tag> constexpr exponent{ "exponent" };
 calc_rule<class term_tag> constexpr term{ "term" };
-calc_rule<class assign_tag> constexpr assign{ "assignment" };
-bp::rule<class expr_tag, val_t, environment> constexpr expr{ "expression" };
+calc_rule<class expr_tag> constexpr expr{ "expression" };
+bp::rule<class assign_tag, std::tuple<std::string, val_t>> constexpr assign{ "assignment" };
 
 auto constexpr number{ bp::lexeme[+bp::digit >> -('.' >> +bp::digit)] };
 
@@ -125,31 +118,45 @@ auto constexpr term_def{
     exponent[do_id] >> *(('*' >> exponent[do_mult]) | ('/' >> exponent[do_div]))
 };
 
-auto constexpr assign_def{
-    bp::lit("let") >> identifier > bp::lit('=') > expr[do_assign]
-};
-
 auto constexpr expr_def{
     term[do_id] >> *(('+' >> term[do_add]) | ('-' >> term[do_subt]))
-    | assign[do_assign]
 };
 
-BOOST_PARSER_DEFINE_RULES(power_10, fac_uns, factor, exponent, term, assign, expr);
+auto constexpr assign_def{
+    bp::lit("let") > identifier > bp::lit('=') > expr
+};
 
+BOOST_PARSER_DEFINE_RULES(
+    power_10,
+    fac_uns,
+    factor,
+    exponent,
+    term,
+    expr,
+    assign
+);
 
 namespace Parser
 {
-    winrt::hstring evaluate(std::wstring_view sv) {
-        winrt::hstring result{};
-        if (!sv.empty()) {
-            std::string const input{ winrt::to_string(sv) };
-            mp::cpp_dec_float_100 val{ 0 };
-
-            if (bp::parse(input, expr, bp::ws, val)) {
-                result = winrt::to_hstring(val.str());
-            }
+    std::tuple<std::string, winrt::hstring, ResultType> evaluate(
+        std::wstring_view sv,
+        Environment::environment const& env) {
+        if (sv.empty()) {
+            return std::make_tuple("", L"", ResultType::Invalid);
         }
 
-        return result;
+        val_t val;
+        std::tuple<std::string, val_t> assign_res;
+        
+        if (bp::parse(sv | bp::as_utf16, bp::with_globals(assign, env), bp::ws, assign_res)) {
+            auto [a, b]{ assign_res };
+             return std::make_tuple(a, winrt::to_hstring(b.str()), ResultType::Assignment);
+        }
+        else if (bp::parse(sv | bp::as_utf16, bp::with_globals(expr, env), bp::ws, val)) {
+            return std::make_tuple("", winrt::to_hstring(val.str()), ResultType::Expression);
+        }
+        else {
+            return std::make_tuple("", L"", ResultType::Invalid);
+        }
     }
 } // Parser

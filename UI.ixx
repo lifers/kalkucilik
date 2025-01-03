@@ -6,6 +6,7 @@ export module UI;
 
 import WinRT;
 import Parser;
+import Environment;
 
 size_t constexpr ID_EDIT{ 1 };
 size_t constexpr ID_STATIC{ 2 };
@@ -13,10 +14,15 @@ size_t constexpr ID_LISTBOX{ 3 };
 size_t constexpr ID_ABOUT{ 4 };
 size_t constexpr ID_SETTINGS{ 5 };
 
+int ScaleDPI(int x, HWND hWnd) {
+    return MulDiv(x, GetDpiForWindow(hWnd), 96);
+}
+
 struct WindowData {
     HWND hEdit;
     HWND hStatic;
     HWND hListBox;
+    Environment::environment env;
     std::vector<winrt::hstring> history;
 };
 
@@ -44,8 +50,14 @@ void UpdateResult(WindowData* data, bool store) {
     wchar_t buffer[1024] = {};
     auto const len{ GetWindowTextW(data->hEdit, buffer, 1024) };
     auto const sv{ std::wstring_view(buffer, len) };
-    auto result{ Parser::evaluate(sv) };
-    if (result.empty()) {
+    auto [rname, result, rtype] { Parser::evaluate(sv, data->env) };
+    if (rtype == Parser::ResultType::Assignment) {
+        if (store) {
+            data->env.set(rname, winrt::to_string(result));
+            AddToHistory(data, sv, result);
+        }
+    }
+    else if (rtype == Parser::ResultType::Invalid || result.empty()) {
         result = L"Invalid expression";
     }
     else if (store) {
@@ -86,15 +98,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         data->hEdit = winrt::check_pointer(CreateWindowExW(0, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            10, 220, 460, 25, hwnd, reinterpret_cast<HMENU>(ID_EDIT), nullptr, nullptr));
+            ScaleDPI(12, hwnd), ScaleDPI(220, hwnd), ScaleDPI(460, hwnd), ScaleDPI(24, hwnd),
+            hwnd, reinterpret_cast<HMENU>(ID_EDIT), nullptr, nullptr));
         data->hStatic = winrt::check_pointer(CreateWindowExW(0, L"STATIC", L"Enter an expression",
             WS_CHILD | WS_VISIBLE,
-            10, 260, 460, 25, hwnd, reinterpret_cast<HMENU>(ID_STATIC), nullptr, nullptr));
+            ScaleDPI(12, hwnd), ScaleDPI(260, hwnd), ScaleDPI(460, hwnd), ScaleDPI(24, hwnd),
+            hwnd, reinterpret_cast<HMENU>(ID_STATIC), nullptr, nullptr));
         data->hListBox = winrt::check_pointer(CreateWindowExW(0, L"LISTBOX", L"",
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_NOTIFY,
-            10, 10, 460, 200, hwnd, reinterpret_cast<HMENU>(ID_LISTBOX), nullptr, nullptr));
+            ScaleDPI(12, hwnd), ScaleDPI(12, hwnd), ScaleDPI(460, hwnd), ScaleDPI(200, hwnd),
+            hwnd, reinterpret_cast<HMENU>(ID_LISTBOX), nullptr, nullptr));
 
-        auto const hFont{ CreateFontW(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        auto const hFont{ CreateFontW(ScaleDPI(20, hwnd), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                 ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                 DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI") };
 
@@ -124,9 +139,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         auto const data{ reinterpret_cast<WindowData*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)) };
         __assume(data != nullptr);
 
-        MoveWindow(data->hListBox, 10, 10, width - 20, 200, TRUE);
-        MoveWindow(data->hEdit, 10, 220, width - 20, 25, TRUE);
-        MoveWindow(data->hStatic, 10, 260, width - 20, 25, TRUE);
+        MoveWindow(data->hListBox, ScaleDPI(12, hwnd), ScaleDPI(12, hwnd), ScaleDPI(width - 20, hwnd), ScaleDPI(200, hwnd), TRUE);
+        MoveWindow(data->hEdit, ScaleDPI(12, hwnd), ScaleDPI(220, hwnd), ScaleDPI(width - 20, hwnd), ScaleDPI(24, hwnd), TRUE);
+        MoveWindow(data->hStatic, ScaleDPI(12, hwnd), ScaleDPI(260, hwnd), ScaleDPI(width - 20, hwnd), ScaleDPI(24, hwnd), TRUE);
         InvalidateRect(hwnd, nullptr, TRUE);
         break;
     }
@@ -158,7 +173,9 @@ namespace UI {
         HWND const hwnd{
             winrt::check_pointer(CreateWindowExW(
                 0, class_name, L"Expression Parser", WS_OVERLAPPEDWINDOW,
-                CW_USEDEFAULT, CW_USEDEFAULT, 500, 400,
+                CW_USEDEFAULT, CW_USEDEFAULT,
+                MulDiv(500, GetDpiForSystem(), 96),
+                MulDiv(400, GetDpiForSystem(), 96),
                 nullptr, nullptr, hInstance, &data
         )) };
 

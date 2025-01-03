@@ -364,6 +364,3 @@ FodyWeavers.xsd
 
 # vcpkg installation directory
 vcpkg_installed/
-
-# Generated resource header
-**/*[Rr]esource.h

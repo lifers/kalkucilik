@@ -1,3 +1,5 @@
+module;
+#include <emmintrin.h>
 export module WinRT;
 
 #define WINRT_EXPORT export

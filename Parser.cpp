@@ -16,10 +16,6 @@ val_t const pi("3.141592653589793238462643383279502"
 val_t const e("2.7182818284590452353602874713526624"
     "977572470936999595749669676277240766303535475945713821785251664274");
 
-//auto constexpr do_assign{ [](auto& ctx) {
-//    val_t const val{ bp::_attr(ctx) };
-//    bp::_val(ctx) = val;
-//} };
 
 // Lookup variable value
 auto constexpr do_lookup{ [](auto& ctx) {

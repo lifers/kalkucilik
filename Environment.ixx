@@ -20,6 +20,10 @@ namespace Environment
                 return "";
             }
         }
+
+        auto internal_map() const {
+            return variables;
+        }
     private:
         bu::unordered_flat_map<std::string, std::string> variables;
     };

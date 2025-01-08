@@ -60,12 +60,18 @@ struct Window {
 
     void FillWidth(int32_t width) {
         this->dim.w = width;
-        this->UpdatePosition();
+    }
+
+    void FillHeight(int32_t height) {
+        this->dim.h = height;
     }
 
     void AlignRight(int32_t width) {
         this->dim.x = width - this->dim.w;
-        this->UpdatePosition();
+    }
+
+    void AlignDown(int32_t height) {
+        this->dim.y = height - this->dim.h;
     }
 
     ~Window() {
@@ -108,6 +114,60 @@ struct WindowData {
             className, WS_OVERLAPPEDWINDOW, 0, L"Kalkucilik",
             Rect(this->ScaleSize(600), this->ScaleSize(400)), nullptr, hInstance, this);
     }
+
+private:
+    void AddToHistory(std::wstring_view expression, std::wstring_view result) {
+        this->history.emplace_back(expression);
+        this->history.emplace_back(result);
+        this->history.emplace_back(L"");
+
+        SendMessageW(this->hListBox.handle, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(expression.data()));
+        SendMessageW(this->hListBox.handle, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(result.data()));
+        SendMessageW(this->hListBox.handle, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L""));
+        // Scroll to the last entry
+        SendMessageW(this->hListBox.handle, WM_VSCROLL, SB_BOTTOM, 0);
+    }
+
+    void UpdateVariableView() const {
+        ListView_DeleteAllItems(this->hVarView.handle);
+        for (auto const& [name, value] : this->env.internal_map()) {
+            auto const wName{ winrt::to_hstring(name) };
+            auto const wValue{ winrt::to_hstring(value) };
+            LVITEMW item{
+                .mask = LVIF_TEXT,
+                .iItem = 0,
+                .iSubItem = 0,
+                .pszText = LPWSTR(wName.c_str()),
+            };
+            ListView_InsertItem(this->hVarView.handle, &item);
+            item.iSubItem = 1;
+            item.pszText = LPWSTR(wValue.c_str());
+            ListView_SetItem(this->hVarView.handle, &item);
+        }
+    }
+
+public:
+    void UpdateResult(bool store) {
+        wchar_t buffer[1024] = {};
+        auto const len{ GetWindowTextW(this->hEdit.handle, buffer, 1024) };
+        auto const sv{ std::wstring_view(buffer, len) };
+        auto [rname, result, rtype] { Parser::evaluate(sv, this->env) };
+        if (rtype == Parser::ResultType::Assignment) {
+            if (store) {
+                this->env.set(rname, winrt::to_string(result));
+                this->AddToHistory(sv, result);
+                this->UpdateVariableView();
+            }
+        }
+        else if (rtype == Parser::ResultType::Invalid || result.empty()) {
+            result = L"Invalid expression";
+        }
+        else if (store) {
+            this->AddToHistory(sv, result);
+        }
+
+        SetWindowTextW(this->hStatic.handle, result.c_str());
+    }
 };
 
 void ShowAboutDialog(HWND hwnd) {
@@ -140,66 +200,14 @@ void ShowHelpDialog(HWND hwnd) {
         L"Press Enter to evaluate an expression.\n", L"Help", MB_OK | MB_ICONINFORMATION);
 }
 
-void AddToHistory(WindowData* data, std::wstring_view expression, std::wstring_view result) {
-    data->history.emplace_back(expression);
-    data->history.emplace_back(result);
-    data->history.emplace_back(L"");
-
-    SendMessageW(data->hListBox.handle, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(expression.data()));
-    SendMessageW(data->hListBox.handle, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(result.data()));
-    SendMessageW(data->hListBox.handle, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L""));
-    // Scroll to the last entry
-    SendMessageW(data->hListBox.handle, WM_VSCROLL, SB_BOTTOM, 0);
-}
-
-void UpdateVariableView(WindowData const* data) {
-    ListView_DeleteAllItems(data->hVarView.handle);
-    for (auto const& [name, value] : data->env.internal_map()) {
-        auto const wName{ winrt::to_hstring(name) };
-        auto const wValue{ winrt::to_hstring(value) };
-        LVITEMW item{
-            .mask = LVIF_TEXT,
-            .iItem = 0,
-            .iSubItem = 0,
-            .pszText = LPWSTR(wName.c_str()),
-        };
-        ListView_InsertItem(data->hVarView.handle, &item);
-        item.iSubItem = 1;
-        item.pszText = LPWSTR(wValue.c_str());
-        ListView_SetItem(data->hVarView.handle, &item);
-    }
-}
-
-void UpdateResult(WindowData* data, bool store) {
-    wchar_t buffer[1024] = {};
-    auto const len{ GetWindowTextW(data->hEdit.handle, buffer, 1024) };
-    auto const sv{ std::wstring_view(buffer, len) };
-    auto [rname, result, rtype] { Parser::evaluate(sv, data->env) };
-    if (rtype == Parser::ResultType::Assignment) {
-        if (store) {
-            data->env.set(rname, winrt::to_string(result));
-            AddToHistory(data, sv, result);
-            UpdateVariableView(data);
-        }
-    }
-    else if (rtype == Parser::ResultType::Invalid || result.empty()) {
-        result = L"Invalid expression";
-    }
-    else if (store) {
-        AddToHistory(data, sv, result);
-    }
-
-    SetWindowTextW(data->hStatic.handle, result.c_str());
-}
-
-LRESULT CALLBACK EditProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+LRESULT CALLBACK EditProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR dwRefData) {
     auto const data{ reinterpret_cast<WindowData*>(dwRefData) };
     __assume(data != nullptr);
 
     switch (uMsg) {
     case WM_KEYDOWN:
         if (wParam == VK_RETURN) {
-            UpdateResult(data, true);
+            data->UpdateResult(true);
         }
         break;
     }
@@ -270,7 +278,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         else if (LOWORD(wParam) == ID_EDIT && HIWORD(wParam) == EN_CHANGE) {
             auto const data{ reinterpret_cast<WindowData*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)) };
             __assume(data != nullptr);
-            UpdateResult(data, false);
+            data->UpdateResult(false);
         }
         break;
     }
@@ -281,11 +289,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         __assume(data != nullptr);
 
         data->UpdateDPI();
+
         auto const rtlPadding{ data->ScaleSize(12) };
         data->hVarView.AlignRight(width - rtlPadding);
         data->hListBox.FillWidth(data->hVarView.dim.x - 2 * rtlPadding);
         data->hEdit.FillWidth(width - 2 * rtlPadding);
         data->hStatic.FillWidth(width - 2 * rtlPadding);
+
+        auto const ttdPadding{ data->ScaleSize(16) };
+        data->hStatic.AlignDown(height - ttdPadding);
+        data->hEdit.AlignDown(data->hStatic.dim.y - ttdPadding);
+        data->hListBox.FillHeight(data->hEdit.dim.y - ttdPadding);
+        data->hVarView.FillHeight(data->hEdit.dim.y - 2 * ttdPadding);
+
+        data->hEdit.UpdatePosition();
+        data->hStatic.UpdatePosition();
+        data->hListBox.UpdatePosition();
+        data->hVarView.UpdatePosition();
         InvalidateRect(hwnd, nullptr, TRUE);
         break;
     }

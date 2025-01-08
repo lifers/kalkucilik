@@ -2,7 +2,7 @@
 #include <Windows.h>
 import UI;
 
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     UI::run_window(hInstance, nCmdShow);
 
     return 0;

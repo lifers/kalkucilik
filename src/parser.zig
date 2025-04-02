@@ -58,23 +58,9 @@ pub const Parser = struct {
     }
 
     fn expression(self: *Parser) !*Expr {
-        var expr = try self.power();
-
-        while (self.match(&.{ .Plus, .Minus })) {
-            const op = self.prev();
-            const right = try self.power();
-            const new_expr = try self.allocator.create(Expr);
-            new_expr.* = .{ .Binary = .{ .left = expr, .op = op, .right = right } };
-            expr = new_expr;
-        }
-
-        return expr;
-    }
-
-    fn power(self: *Parser) !*Expr {
         var expr = try self.factor();
 
-        while (self.match(&.{.Exponent})) {
+        while (self.match(&.{ .Plus, .Minus })) {
             const op = self.prev();
             const right = try self.factor();
             const new_expr = try self.allocator.create(Expr);
@@ -86,9 +72,23 @@ pub const Parser = struct {
     }
 
     fn factor(self: *Parser) !*Expr {
-        var expr = try self.unary();
+        var expr = try self.power();
 
         while (self.match(&.{ .Multiply, .Divide })) {
+            const op = self.prev();
+            const right = try self.power();
+            const new_expr = try self.allocator.create(Expr);
+            new_expr.* = .{ .Binary = .{ .left = expr, .op = op, .right = right } };
+            expr = new_expr;
+        }
+
+        return expr;
+    }
+
+    fn power(self: *Parser) !*Expr {
+        var expr = try self.unary();
+
+        while (self.match(&.{.Exponent})) {
             const op = self.prev();
             const right = try self.unary();
             const new_expr = try self.allocator.create(Expr);
